@@ -70,8 +70,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
      * application with stcp_unblock_application(sd).  you may also use
      * this to communicate an error condition back to the application, e.g.
      * if connection fails; to do so, just set errno appropriately (e.g. to
-     * ECONNREFUSED, etc.) before calling the function.
-     */
+     * ECONNREFUSED, etc.) before calling the function.*/
     if(is_active) /*if active open*/
       {
 	/*set the SYN segment header*/
@@ -85,7 +84,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
 	ctx->connection_state=CSTATE_SYN_SENT;  /* SYN_SENT STATE*/
 	stcp_network_recv(sd,recvSegment,sizeof(SEGMENT));
 	fprintf(stdout,"recv : %d %d %X %d %d\n",ntohl(recvSegment->stcpheader.th_seq),ntohl(recvSegment->stcpheader.th_ack),recvSegment->stcpheader.th_flags,ntohs(recvSegment->stcpheader.th_win),recvSegment->stcpheader.th_off);
-	if(recvSegment->stcpheader.th_flags==0x12) /*if received packet is SYN+ACK*/
+	if(recvSegment->stcpheader.th_flags==(TH_ACK | TH_SYN)) /*if received packet is SYN+ACK*/
 	  {
 	    /*If sequence number unmatched print error*/
 	    if(ntohl(recvSegment->stcpheader.th_ack)!=(ctx->initial_sequence_num+1))
@@ -113,7 +112,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
 	    /*send SYN+ACK*/
 	    bzero(sendSegment,sizeof(SEGMENT));
 	    sendSegment->stcpheader.th_seq=htonl(ctx->initial_sequence_num);
-	    sendSegment->stcpheader.th_flags=0x12;
+	    sendSegment->stcpheader.th_flags=(TH_ACK | TH_SYN);
 	    sendSegment->stcpheader.th_win=htons(MIN_CWND_SIZE);
 	    sendSegment->stcpheader.th_off=5;
 	    sendSegment->stcpheader.th_ack=htonl(ntohl(recvSegment->stcpheader.th_seq)+1);
@@ -125,7 +124,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
 	      {
 		bzero(recvSegment,sizeof(SEGMENT));
 		stcp_network_recv(sd,recvSegment,sizeof(SEGMENT));
-		if(recvSegment->stcpheader.th_flags==0x12) /*if received packet is ACK+SYN*/
+		if(recvSegment->stcpheader.th_flags==(TH_ACK | TH_SYN)) /*if received packet is ACK+SYN*/
 		  {
 		    if(ntohl(recvSegment->stcpheader.th_ack)!=(ctx->initial_sequence_num+1))
 		      {
@@ -163,7 +162,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
 		/*send SYN+ACK*/
 		bzero(sendSegment,sizeof(SEGMENT));
 		sendSegment->stcpheader.th_seq=htonl(ctx->initial_sequence_num);
-		sendSegment->stcpheader.th_flags=0x12;
+		sendSegment->stcpheader.th_flags=(TH_ACK | TH_SYN);
 		sendSegment->stcpheader.th_win=htons(MIN_CWND_SIZE);
 		sendSegment->stcpheader.th_off=5;
 		sendSegment->stcpheader.th_ack=htonl(ntohl(recvSegment->stcpheader.th_seq)+1);
@@ -236,6 +235,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 {
     assert(ctx);
     SEGMENT *recvSegment,*sendSegment;
+    
     recvSegment=(SEGMENT *)calloc(1,sizeof(SEGMENT));
     sendSegment=(SEGMENT *)calloc(1,sizeof(SEGMENT));
     while (!ctx->done)
@@ -248,18 +248,24 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
         /* check whether it was the network, app, or a close request */
         if (event & APP_DATA)
-        {
-            /* the application has requested that data be sent */
-            /* see stcp_app_recv() */
-	  stcp_app_recv(sd,)
-        }
-	else if(event & APP_DATA)
 	  {
-	    
+	    /* the application has requested that data be sent */
+            /* see stcp_app_recv() */
+	    stcp_app_recv(sd,sendSegment->data,MAX_PAYLOAD_SIZE);
+	     stcp_network_send(sd,sendSegment,sizeof(SEGMENT),NULL);
+	    fprintf(stdout,"send : %d %d %X %d %d %s\n",ntohl(sendSegment->stcpheader.th_seq),ntohl(sendSegment->stcpheader.th_ack),sendSegment->stcpheader.th_flags,ntohs(sendSegment->stcpheader.th_win),sendSegment->stcpheader.th_off,sendSegment->data);
+        }
+	else if(event & NETWORK_DATA)
+	  {
+	    stcp_network_recv(sd,recvSegment,sizeof(SEGMENT));
+	    fprintf(stdout,"recv : %d %d %X %d %d %s\n",ntohl(recvSegment->stcpheader.th_seq),ntohl(recvSegment->stcpheader.th_ack),recvSegment->stcpheader.th_flags,ntohs(recvSegment->stcpheader.th_win),recvSegment->stcpheader.th_off,recvSegment->data);
+	    /*stcp_app_send(sd,recvSegment,sizeof(SEGMENT));*/
 	  }
 
         /* etc. */
     }
+    free(recvSegment);
+    free(sendSegment);
 }
 
 
