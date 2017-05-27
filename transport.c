@@ -21,7 +21,7 @@
 #include "stcp_api.h"
 #include "transport.h"
 
-#define MAX_PAYLOAD_SIZE 536
+#define MAX_PAYLOAD_SIZE 516
 #define MIN_CWND_SIZE 3027
 enum {CSTATE_CLOSED,CSTATE_ESTABLISHED,CSTATE_LISTEN,CSTATE_SYN_SENT,CSTATE_SYN_RCVD,CSTATE_FIN_WAIT_1,CSTATE_FIN_WAIT_2,CSTATE_CLOSE_WAIT,CSTATE_LAST_ACK,CSTATE_CLOSING };    /* obviously you should have more states */
 
@@ -235,13 +235,12 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 {
     assert(ctx);
     SEGMENT *recvSegment,*sendSegment;
-    
     recvSegment=(SEGMENT *)calloc(1,sizeof(SEGMENT));
     sendSegment=(SEGMENT *)calloc(1,sizeof(SEGMENT));
     while (!ctx->done)
     {
         unsigned int event;
-
+	char window[MIN_CWND_SIZE];
         /* see stcp_api.h or stcp_api.c for details of this function */
         /* XXX: you will need to change some of these arguments! */
         event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
@@ -252,20 +251,28 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 	    /* the application has requested that data be sent */
             /* see stcp_app_recv() */
 	    stcp_app_recv(sd,sendSegment->data,MAX_PAYLOAD_SIZE);
-	     stcp_network_send(sd,sendSegment,sizeof(SEGMENT),NULL);
-	    fprintf(stdout,"send : %d %d %X %d %d %s\n",ntohl(sendSegment->stcpheader.th_seq),ntohl(sendSegment->stcpheader.th_ack),sendSegment->stcpheader.th_flags,ntohs(sendSegment->stcpheader.th_win),sendSegment->stcpheader.th_off,sendSegment->data);
+	    sendSegment->stcpheader.th_seq=htonl(ctx->initial_sequence_num);
+	    sendSegment->stcpheader.th_win=htons(MIN_CWND_SIZE);
+	    sendSegment->stcpheader.th_off=5;
+	    stcp_network_send(sd,sendSegment,sizeof(SEGMENT),NULL);
+	    /*fprintf(stdout,"send : %d %d %X %d %d %s\n",ntohl(sendSegment->stcpheader.th_seq),ntohl(sendSegment->stcpheader.th_ack),sendSegment->stcpheader.th_flags,ntohs(sendSegment->stcpheader.th_win),sendSegment->stcpheader.th_off,sendSegment->data);*/
+	    bzero(sendSegment,sizeof(SEGMENT));
         }
 	else if(event & NETWORK_DATA)
 	  {
 	    stcp_network_recv(sd,recvSegment,sizeof(SEGMENT));
 	    fprintf(stdout,"recv : %d %d %X %d %d %s\n",ntohl(recvSegment->stcpheader.th_seq),ntohl(recvSegment->stcpheader.th_ack),recvSegment->stcpheader.th_flags,ntohs(recvSegment->stcpheader.th_win),recvSegment->stcpheader.th_off,recvSegment->data);
-	    /*stcp_app_send(sd,recvSegment,sizeof(SEGMENT));*/
+	    stcp_app_send(sd,recvSegment->data,strlen(recvSegment->data));
+	    bzero(sendSegment,sizeof(SEGMENT));
 	  }
-
+	else if(event & APP_CLOSE_REQUESTED)
+	  {
+	  }
         /* etc. */
     }
     free(recvSegment);
     free(sendSegment);
+    return;
 }
 
 
