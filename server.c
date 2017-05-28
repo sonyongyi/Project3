@@ -137,12 +137,16 @@ static void do_connection(mysocket_t sd)
         if (rc < 0 || !*line)
             goto done;
         fprintf(stderr, "client: %s\n", line);
-
+        if(strcmp("end",line)==0)
+	  {
+	    goto done;
+	  }
         if (process_line(sd, line) < 0)
         {
             perror("process_line");
             goto done;
         }
+	
     }   /* for (;;) */
 
 done:

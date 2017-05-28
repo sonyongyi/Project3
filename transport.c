@@ -171,6 +171,15 @@ void transport_init(mysocket_t sd, bool_t is_active)
 		event=stcp_wait_for_event(sd,ANY_EVENT,NULL);
 		if(event & APP_CLOSE_REQUESTED)
 		  {
+		    ctx->connection_state=CSTATE_FIN_WAIT_1;
+		    bzero(sendSegment,sizeof(SEGMENT));
+		    sendSegment->stcpheader.th_flags=TH_FIN;
+		    sendSegment->stcpheader.th_ack=htonl(ctx->initial_sequence_num2);
+		    sendSegment->stcpheader.th_win=htons(MIN_CWND_SIZE);
+		    sendSegment->stcpheader.th_off=5;
+		 free(recvSegment);
+		 free(sendSegment);
+		    goto FIN;
 		  }
 		else if(event==NETWORK_DATA)
 		  {
@@ -196,11 +205,52 @@ void transport_init(mysocket_t sd, bool_t is_active)
     fflush(stdout);
     stcp_unblock_application(sd);
     control_loop(sd, ctx);
+    if(ctx->connection_state==CSTATE_CLOSE_WAIT)
+      {
+	bzero(sendSegment,sizeof(SEGMENT));
+	event=stcp_wait_for_event(sd,APP_CLOSE_REQUESTED,NULL);
+	sendSegment->stcpheader.th_flags=TH_FIN;
+	ctx->initial_sequence_num+=1;
+	sendSegment->stcpheader.th_seq=htonl(ctx->initial_sequence_num);
+	sendSegment->stcpheader.th_win=htons(MIN_CWND_SIZE);
+	sendSegment->stcpheader.th_off=5;
+	stcp_network_send(sd,sendSegment,sizeof(SEGMENT),NULL);
+	ctx->connection_state=CSTATE_LAST_ACK;
+	bzero(recvSegment,sizeof(SEGMENT));
+	stcp_network_recv(sd,recvSegment,sizeof(SEGMENT));
+	if(recvSegment->stcpheader.th_flags==TH_ACK)
+	  {
+	    free(ctx);
+	    free(recvSegment);
+	    free(sendSegment);
+	    return;
+	  }
+      }
+ FIN:
     
+    bzero(recvSegment,sizeof(SEGMENT));
+    stcp_network_recv(sd,recvSegment,sizeof(SEGMENT));
+    fprintf(stdout,"recv : %d %d %X %d %d %s\n",ntohl(recvSegment->stcpheader.th_seq),ntohl(recvSegment->stcpheader.th_ack),recvSegment->stcpheader.th_flags,ntohs(recvSegment->stcpheader.th_win),strlen(recvSegment->data),recvSegment->data);
+    if(recvSegment->stcpheader.th_flags==TH_ACK)
+      {
+	ctx->connection_state=CSTATE_FIN_WAIT_2;
+	bzero(recvSegment,sizeof(SEGMENT));
+	stcp_network_recv(sd,recvSegment,sizeof(SEGMENT));
+	if(recvSegment->stcpheader.th_flags==TH_FIN)
+	  {
+	    bzero(sendSegment,sizeof(SEGMENT));
+	    sendSegment->stcpheader.th_flags=TH_ACK;
+	    sendSegment->stcpheader.th_ack=htonl(ctx->initial_sequence_num2+1);
+	    sendSegment->stcpheader.th_win=htons(MIN_CWND_SIZE);
+	    sendSegment->stcpheader.th_off=5;
+	    stcp_network_send(sd,sendSegment,sizeof(SEGMENT),NULL);
+	  }
+      }
     /* do any cleanup here */
     free(ctx);
     free(recvSegment);
     free(sendSegment);
+    return;
 }
 
 
@@ -267,6 +317,16 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 	    else if(recvSegment->stcpheader.th_flags==TH_FIN)
 	      {
 		stcp_fin_received(sd);
+		bzero(sendSegment,sizeof(SEGMENT));
+		ctx->connection_state=CSTATE_CLOSE_WAIT;
+		sendSegment->stcpheader.th_flags=TH_ACK;
+		ctx->initial_sequence_num2+=1;
+		sendSegment->stcpheader.th_ack=htonl(ctx->initial_sequence_num2);
+		sendSegment->stcpheader.th_win=htons(MIN_CWND_SIZE);
+		sendSegment->stcpheader.th_off=5;
+		stcp_network_send(sd,sendSegment,sizeof(SEGMENT),NULL);
+		 free(recvSegment);
+		 free(sendSegment);
 		return;
 	      }
 	    else
@@ -294,8 +354,11 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 	    sendSegment->stcpheader.th_win=htons(MIN_CWND_SIZE);
 	    sendSegment->stcpheader.th_off=5;
 	    stcp_network_send(sd,sendSegment,sizeof(SEGMENT),NULL);
-	    		fprintf(stdout,"fuckin end");
-		fflush(stdout);
+	    fprintf(stdout,"sendfin : %d %d %X %d %d %s\n",ntohl(sendSegment->stcpheader.th_seq),ntohl(sendSegment->stcpheader.th_ack),sendSegment->stcpheader.th_flags,ntohs(sendSegment->stcpheader.th_win),strlen(sendSegment->data),sendSegment->data);
+	    ctx->connection_state=CSTATE_FIN_WAIT_1;
+	     free(recvSegment);
+	     free(sendSegment);
+	     return;
 	  }
 	bzero(sendSegment,sizeof(SEGMENT));
 	bzero(recvSegment,sizeof(SEGMENT));
